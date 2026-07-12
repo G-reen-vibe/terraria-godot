@@ -176,20 +176,19 @@ static func generate_world(seed_val: int) -> Dictionary:
     # Add a small starting cave/platform area at spawn (so player doesn't get stuck)
     var spawn_x: int = W / 2
     var spawn_y: int = int(surface_heights[spawn_x]) - 3
-    # Clear a small area
-    for dy in range(-3, 1):
-        for dx in range(-2, 3):
+    # Clear a wider area (including any tree trunks)
+    for dy in range(-5, 4):
+        for dx in range(-3, 4):
             var tx: int = spawn_x + dx
             var ty: int = spawn_y + dy
             if tx >= 0 and tx < W and ty >= 0 and ty < H:
                 tiles[ty][tx] = WorldData.Tile.AIR
     # Place a wood platform under spawn for safety
-    var plat_y: int = spawn_y + 2
+    var plat_y: int = spawn_y + 3
     for dx in range(-3, 4):
         var tx: int = spawn_x + dx
         if tx >= 0 and tx < W and plat_y >= 0 and plat_y < H:
-            if tiles[plat_y][tx] == WorldData.Tile.AIR:
-                tiles[plat_y][tx] = WorldData.Tile.WOOD_PLATFORM
+            tiles[plat_y][tx] = WorldData.Tile.WOOD_PLATFORM
 
     # Ensure corruption chasms - vertical drops in corruption zones
     for zone in corruption_zones:
