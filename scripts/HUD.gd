@@ -249,6 +249,48 @@ func _build_time_label() -> void:
     time_label.add_theme_color_override("font_outline_color", Color.BLACK)
     time_label.add_theme_constant_override("outline_size", 3)
     add_child(time_label)
+    # Connect to player death
+    await get_tree().process_frame
+    if GameManager.player:
+        GameManager.player.died.connect(_on_player_died)
+
+
+func _on_player_died() -> void:
+    var game_over_panel := Panel.new()
+    game_over_panel.name = "GameOverPanel"
+    game_over_panel.size = Vector2(400, 200)
+    game_over_panel.position = Vector2((1280 - 400) / 2, (720 - 200) / 2)
+    game_over_panel.modulate = Color(0.2, 0.1, 0.1, 0.95)
+    add_child(game_over_panel)
+
+    var title := Label.new()
+    title.text = "Game Over"
+    title.position = Vector2(100, 40)
+    title.size = Vector2(200, 40)
+    title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+    title.add_theme_font_size_override("font_size", 32)
+    title.add_theme_color_override("font_color", Color(1, 0.3, 0.3))
+    game_over_panel.add_child(title)
+
+    var subtitle := Label.new()
+    subtitle.text = "You died! Restart the game to try again."
+    subtitle.position = Vector2(50, 100)
+    subtitle.size = Vector2(300, 20)
+    subtitle.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+    subtitle.add_theme_font_size_override("font_size", 14)
+    game_over_panel.add_child(subtitle)
+
+    var restart_btn := Button.new()
+    restart_btn.text = "Restart"
+    restart_btn.position = Vector2(150, 140)
+    restart_btn.size = Vector2(100, 30)
+    restart_btn.pressed.connect(_on_restart)
+    game_over_panel.add_child(restart_btn)
+
+
+func _on_restart() -> void:
+    GameManager.reset()
+    get_tree().reload_current_scene()
 
 
 func _on_health_changed(hp: int, max_hp: int) -> void:
