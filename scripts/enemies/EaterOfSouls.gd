@@ -11,7 +11,7 @@ func _ready() -> void:
     super._ready()
     setup_enemy(18, 7, 16.0, 16.0, EYE_COLOR)
     contact_knockback = 130.0
-    drops = {"rotten_chunk": 0.5, "gel": 0.3}
+    drops = {"rotten_chunk": 0.5, "gel": 0.3, "vile_mushroom": 0.15}
     circle_angle = randf() * TAU
 
 

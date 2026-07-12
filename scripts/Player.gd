@@ -351,40 +351,56 @@ func _apply_physics(delta: float) -> void:
 
 func _move_axis(dx: float, dy: float) -> void:
     # Move and resolve tile collisions
+    # X axis: only check solid tiles (player passes through platforms horizontally)
     if dx != 0:
         global_position.x += dx
-        # Check collision
-        if _check_collision():
-            # Resolve - move back and zero velocity
+        if _check_solid_collision():
             global_position.x -= dx
-            # Step to contact (binary search)
+            # Binary search to find contact point
             var step: float = dx
             for _i in range(8):
                 step *= 0.5
                 global_position.x += step
-                if _check_collision():
+                if _check_solid_collision():
                     global_position.x -= step
             velocity.x = 0
+    # Y axis
     if dy != 0:
-        global_position.y += dy
-        if _check_collision_y(dy):
-            global_position.y -= dy
-            var step: float = dy
-            for _i in range(8):
-                step *= 0.5
-                global_position.y += step
-                if _check_collision_y(dy):
-                    global_position.y -= step
-            if dy > 0:
-                # Landed on ground
+        if dy > 0:
+            # Moving down - check solid first, then platforms
+            global_position.y += dy
+            if _check_solid_collision():
+                # Hit solid ground - binary search
+                global_position.y -= dy
+                var step: float = dy
+                for _i in range(8):
+                    step *= 0.5
+                    global_position.y += step
+                    if _check_solid_collision():
+                        global_position.y -= step
                 velocity.y = 0
             else:
-                # Hit ceiling
+                # Check platform collision - snap to platform top if crossed
+                var snap_y: float = _check_platform_landing(dy)
+                if snap_y < 1e9:
+                    global_position.y = snap_y
+                    velocity.y = 0
+        else:
+            # Moving up - only check solid
+            global_position.y += dy
+            if _check_solid_collision():
+                global_position.y -= dy
+                var step: float = dy
+                for _i in range(8):
+                    step *= 0.5
+                    global_position.y += step
+                    if _check_solid_collision():
+                        global_position.y -= step
                 velocity.y = 0
 
 
 func _get_aabb() -> Rect2:
-    # Player AABB in world coords
+    # Player AABB in world coords. global_position.y is at the player's FEET.
     return Rect2(
         global_position.x - WIDTH / 2,
         global_position.y - HEIGHT,
@@ -393,36 +409,44 @@ func _get_aabb() -> Rect2:
     )
 
 
-func _check_collision() -> bool:
-    # Check if player's AABB overlaps any solid tile (or platform, if moving down)
+func _check_solid_collision() -> bool:
+    # Check if player's AABB overlaps any SOLID tile (not platforms)
     var aabb := _get_aabb()
-    return world.check_aabb_collision(aabb, false)
+    return world.check_aabb_collision(aabb, true)  # ignore_platforms=true
+
+
+## Check if player landed on a platform while falling.
+## Returns the y position to snap to, or 1e9 if no landing.
+func _check_platform_landing(dy: float) -> float:
+    var aabb := _get_aabb()
+    var feet_y: float = aabb.position.y + aabb.size.y  # = global_position.y
+    var prev_feet_y: float = feet_y - dy  # position before the move
+    var tx0: int = int(aabb.position.x / WorldData.TILE_SIZE)
+    var tx1: int = int((aabb.position.x + aabb.size.x - 0.01) / WorldData.TILE_SIZE)
+    # Check the tile row at the player's feet
+    var ty: int = int(feet_y / WorldData.TILE_SIZE)
+    for tx in range(tx0, tx1 + 1):
+        if world.is_platform_at_tile(tx, ty):
+            var platform_top: float = ty * WorldData.TILE_SIZE
+            # Player was above the platform before the move, and is now at or below it
+            if prev_feet_y - 0.5 <= platform_top and feet_y >= platform_top:
+                return platform_top - 0.01  # snap feet to platform top
+    return 1e9  # no landing
+
+
+func _check_collision() -> bool:
+    # Legacy: check solid tiles only (for X axis)
+    return _check_solid_collision()
 
 
 func _check_collision_y(dy: float) -> bool:
-    # For Y movement, platforms only collide when moving down
-    var aabb := _get_aabb()
+    # Legacy: kept for compatibility
     if dy > 0:
-        # Moving down - check platforms too, but only the bottom edge
-        # First check solid tiles
-        if world.check_aabb_collision(aabb, true):
+        if _check_solid_collision():
             return true
-        # Check platforms - only collide if player's feet are above the platform top
-        var feet_y: float = aabb.position.y + aabb.size.y
-        var tx0: int = int(aabb.position.x / WorldData.TILE_SIZE)
-        var tx1: int = int((aabb.position.x + aabb.size.x - 0.01) / WorldData.TILE_SIZE)
-        var ty: int = int(feet_y / WorldData.TILE_SIZE)
-        for tx in range(tx0, tx1 + 1):
-            if world.is_platform_at_tile(tx, ty):
-                # Check if feet are within the platform tile's top portion
-                var platform_top: float = ty * WorldData.TILE_SIZE
-                if feet_y - dy - 0.5 <= platform_top:
-                    # Player was above platform last frame, collide
-                    return true
-        return false
+        return _check_platform_landing(dy) < 1e9
     else:
-        # Moving up - only solid
-        return world.check_aabb_collision(aabb, true)
+        return _check_solid_collision()
 
 
 func _is_on_ground() -> bool:
@@ -447,6 +471,11 @@ func _is_on_ground() -> bool:
 
 # === World interaction (mining/placing/attacking) ===
 func _handle_world_interaction(delta: float) -> void:
+    # Don't interact with world when UI is open
+    if inventory_ui_open or crafting_ui_open:
+        mining_target = Vector2i(-1, -1)
+        mining_progress = 0.0
+        return
     var selected = get_selected_item()
     var use_pressed := Input.is_action_pressed("use")
     var alt_pressed := Input.is_action_pressed("alt_use")
@@ -454,12 +483,20 @@ func _handle_world_interaction(delta: float) -> void:
     # Calculate target tile (where mouse is pointing)
     var target_tile := WorldData.world_to_tile_pos(mouse_world_pos)
     var reach: float = 80.0  # Default reach distance
+    var is_consumable := false
     if selected and typeof(selected) == TYPE_DICTIONARY:
         var item_cat: int = selected.get("category", -1)
         if item_cat == ItemDB.ItemCategory.SWORD:
             reach = selected.get("range", 32)
         elif item_cat == ItemDB.ItemCategory.PICKAXE or item_cat == ItemDB.ItemCategory.AXE:
             reach = 80.0
+        elif item_cat == ItemDB.ItemCategory.CONSUMABLE:
+            is_consumable = true
+
+    # Consumables don't need a target - use immediately
+    if is_consumable and use_pressed:
+        _do_consume(selected)
+        return
 
     # Distance from player to target tile (use player center)
     var player_center := global_position - Vector2(0, HEIGHT / 2)
@@ -567,6 +604,13 @@ func _break_tile(tx: int, ty: int, tile_id: int) -> void:
     var drop_id := _tile_to_item_id(tile_id)
     if drop_id != "":
         world.spawn_item_drop(drop_id, 1, WorldData.tile_to_world_pos(tx, ty) + Vector2(WorldData.TILE_SIZE / 2, WorldData.TILE_SIZE / 2))
+    # Special drops from grass
+    if tile_id == WorldData.Tile.GRASS:
+        if randf() < 0.1:
+            world.spawn_item_drop("mushroom", 1, WorldData.tile_to_world_pos(tx, ty) + Vector2(WorldData.TILE_SIZE / 2, WorldData.TILE_SIZE / 2))
+    elif tile_id == WorldData.Tile.CORRUPT_GRASS:
+        if randf() < 0.15:
+            world.spawn_item_drop("vile_mushroom", 1, WorldData.tile_to_world_pos(tx, ty) + Vector2(WorldData.TILE_SIZE / 2, WorldData.TILE_SIZE / 2))
     # Special: if it was a tree trunk, also break leaves above
     if tile_id == WorldData.Tile.WOOD:
         # Check if it's a tree trunk (no solid block below)
