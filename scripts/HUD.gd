@@ -370,11 +370,48 @@ func _on_craft_button() -> void:
     var recipe: Dictionary = crafting_list.get_item_metadata(selected[0])
     if recipe.is_empty():
         return
-    if RecipeDB.can_craft(recipe, player.inventory, GameManager.world.get_nearby_stations(player.global_position)):
-        player.inventory = RecipeDB.consume_ingredients(player.inventory, recipe)
-        player._add_item(recipe.get("result", ""), recipe.get("count", 1))
-        _refresh_crafting()
-        _refresh_inventory()
+    var stations: Array = []
+    if GameManager.world and GameManager.world.has_method("get_nearby_stations"):
+        stations = GameManager.world.get_nearby_stations(player.global_position)
+    if not RecipeDB.can_craft(recipe, player.inventory, stations):
+        return
+    # Check if there's room for the result
+    var result_id: String = recipe.get("result", "")
+    var result_count: int = recipe.get("count", 1)
+    var room := _check_inventory_room(result_id, result_count)
+    if not room:
+        print("[HUD] No room for crafting result: ", result_id)
+        return
+    player.inventory = RecipeDB.consume_ingredients(player.inventory, recipe)
+    player._add_item(result_id, result_count)
+    player.inventory_changed.emit()
+    _refresh_crafting()
+    _refresh_inventory()
+
+
+func _check_inventory_room(item_id: String, count: int) -> bool:
+    var item: Dictionary = ItemDB.get_item(item_id)
+    if item.is_empty():
+        return false
+    var max_stack: int = item.get("max_stack", 99)
+    # Count what can fit in existing stacks
+    var remaining := count
+    for slot in player.inventory:
+        if slot == null or typeof(slot) != TYPE_DICTIONARY:
+            continue
+        if slot.get("id", "") == item_id:
+            var cur: int = slot.get("count", 0)
+            if cur < max_stack:
+                remaining -= (max_stack - cur)
+                if remaining <= 0:
+                    return true
+    # Count empty slots
+    for slot in player.inventory:
+        if slot == null:
+            remaining -= max_stack
+            if remaining <= 0:
+                return true
+    return remaining <= 0
 
 
 func _input(event: InputEvent) -> void:

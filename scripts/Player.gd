@@ -280,6 +280,9 @@ func _process(delta: float) -> void:
     # Handle mining/placing
     _handle_world_interaction(delta)
 
+    # Redraw for swing/mining visuals
+    queue_redraw()
+
     # Clamp to world bounds
     var world_w: float = WorldData.WORLD_WIDTH * WorldData.TILE_SIZE
     var world_h: float = WorldData.WORLD_HEIGHT * WorldData.TILE_SIZE
@@ -778,14 +781,43 @@ func heal(amount: int) -> void:
 
 
 func _draw() -> void:
-    # Draw swing arc if active
-    if attack_swing_time > 0 and swing_arc.visible:
-        var arc_draw: Node = swing_arc.get_child(0)
-        if arc_draw:
-            arc_draw.queue_redraw()
+    # Draw swing arc if active (at player center)
+    if attack_swing_time > 0:
+        var progress: float = 1.0 - (attack_swing_time / max(attack_cooldown * 0.6, 0.01))
+        var arc_span := deg_to_rad(100.0)  # 100 degree arc
+        var base_angle := attack_direction.angle()
+        var current_angle := base_angle - arc_span / 2 + arc_span * progress
+        var radius := 32.0
+        var steps := 10
+        var points: PackedVector2Array = []
+        points.append(Vector2.ZERO)
+        for i in range(steps + 1):
+            var t: float = float(i) / steps
+            var a: float = current_angle - 0.4 + t * 0.8  # small arc around current angle
+            points.append(Vector2(cos(a), sin(a)) * radius)
+        # Draw at player center (which is global_position - Vector2(0, HEIGHT/2) in world space,
+        # but _draw is in local space so we use Vector2(0, -HEIGHT/2))
+        var draw_pos := Vector2(0, -HEIGHT / 2)
+        # Transform points to local
+        var local_points: PackedVector2Array = []
+        for p in points:
+            local_points.append(p + draw_pos)
+        draw_colored_polygon(local_points, Color(1.0, 1.0, 0.9, 0.4))
+    
+    # Draw mining crack on target tile
+    if mining_target.x >= 0 and mining_progress > 0 and mining_time_total > 0:
+        var progress: float = mining_progress / mining_time_total
+        var crack_pos := WorldData.tile_to_world_pos(mining_target.x, mining_target.y) - global_position + Vector2(WorldData.TILE_SIZE / 2, WorldData.TILE_SIZE / 2)
+        # Draw crack lines
+        var crack_color := Color(0, 0, 0, progress * 0.6)
+        draw_rect(Rect2(crack_pos - Vector2(6, 6), Vector2(12, 12)), crack_color, false, 2)
+        if progress > 0.3:
+            draw_line(crack_pos - Vector2(5, 0), crack_pos + Vector2(5, 0), crack_color, 1)
+        if progress > 0.6:
+            draw_line(crack_pos - Vector2(0, 5), crack_pos + Vector2(0, 5), crack_color, 1)
 
 
-# Inner class for drawing arc
+# Inner class for drawing arc (kept for compatibility, unused)
 class _ArcDraw:
     extends Node2D
     var color: Color = Color(1, 1, 1, 0.5)
@@ -794,7 +826,6 @@ class _ArcDraw:
     var current_angle: float = 0.0
 
     func _draw() -> void:
-        # Draw an arc representing the sword swing
         var start_angle: float = deg_to_rad(current_angle - angle_deg / 2)
         var end_angle: float = deg_to_rad(current_angle + angle_deg / 2)
         var points: PackedVector2Array = []

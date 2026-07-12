@@ -61,6 +61,10 @@ func _ready() -> void:
         # Connect tile change signal to update lighting
         tile_map.tile_changed.connect(_on_tile_changed)
 
+        # Connect day/night transitions to recompute lighting
+        GameManager.day_started.connect(_on_day_night_transition)
+        GameManager.night_started.connect(_on_day_night_transition)
+
         # Compute initial lighting
         _recompute_lighting_full()
 
@@ -75,6 +79,12 @@ func _on_tile_changed(tx: int, ty: int, old_id: int, new_id: int) -> void:
         tile_modified.emit(tx, ty, new_id)
         # Recompute lighting in a small area around the change
         _recompute_lighting_area(tx - 16, ty - 16, tx + 16, ty + 16)
+
+
+func _on_day_night_transition() -> void:
+        # Full recompute on day/night transition (expensive but rare)
+        print("[World] Day/night transition, recomputing lighting...")
+        _recompute_lighting_full()
 
 
 # === Lighting system ===
@@ -214,9 +224,8 @@ func _recompute_lighting_full() -> void:
 
 
 func _recompute_lighting_area(x0: int, y0: int, x1: int, y1: int) -> void:
-        # Recompute lighting in a small area (cheap version)
-        # For simplicity, just mark dirty and recompute on next frame if needed
-        # For now, just recompute the area's contribution from nearby light sources
+        # Recompute lighting in a small area around a tile change.
+        # Clears the area's darkness first, then recomputes from nearby light sources.
         var W := WorldData.WORLD_WIDTH
         var H := WorldData.WORLD_HEIGHT
         x0 = max(0, x0)
@@ -224,16 +233,30 @@ func _recompute_lighting_area(x0: int, y0: int, x1: int, y1: int) -> void:
         x1 = min(W - 1, x1)
         y1 = min(H - 1, y1)
 
-        # Collect light sources in expanded area (torch light travels ~12 tiles)
+        # Expand area to account for light propagation (light travels ~12 tiles)
+        var margin := 16
+        var ax0: int = max(0, x0 - margin)
+        var ay0: int = max(0, y0 - margin)
+        var ax1: int = min(W - 1, x1 + margin)
+        var ay1: int = min(H - 1, y1 + margin)
+
+        # Clear light_grid in the expanded area (set to max dark first, will be reduced)
+        var lg_x0: int = max(0, ax0 / LIGHT_CELL_SIZE)
+        var lg_y0: int = max(0, ay0 / LIGHT_CELL_SIZE)
+        var lg_x1: int = min(light_grid_w - 1, ax1 / LIGHT_CELL_SIZE)
+        var lg_y1: int = min(light_grid_h - 1, ay1 / LIGHT_CELL_SIZE)
+        for ly in range(lg_y0, lg_y1 + 1):
+                for lx in range(lg_x0, lg_x1 + 1):
+                        light_grid[ly][lx] = 15  # max dark, will be reduced
+
+        # Collect light sources in expanded area
         var sources: Array = []
-        for y in range(max(0, y0 - 16), min(H, y1 + 17)):
-                for x in range(max(0, x0 - 16), min(W, x1 + 17)):
+        for y in range(ay0, ay1 + 1):
+                for x in range(ax0, ax1 + 1):
                         var tl: int = _tile_light_source(x, y)
                         if tl > 0:
                                 sources.append({"pos": Vector2i(x, y), "light": tl})
 
-        # Clear darkness in area, then re-add from sources
-        # First, set the area to sky-dark baseline
         var sky_brightness := 15 if GameManager.is_day() else 7
 
         # Recompute raw light in the area
@@ -241,12 +264,8 @@ func _recompute_lighting_area(x0: int, y0: int, x1: int, y1: int) -> void:
         var queue: Array = []
 
         # Sky light in area
-        for y in range(y0 - 1, y1 + 2):
-                if y < 0 or y >= H:
-                        continue
-                for x in range(x0 - 1, x1 + 2):
-                        if x < 0 or x >= W:
-                                continue
+        for y in range(ay0, ay1 + 1):
+                for x in range(ax0, ax1 + 1):
                         # Compute sky brightness at this tile
                         var sky_b := sky_brightness
                         for yy in range(0, y):
@@ -269,7 +288,7 @@ func _recompute_lighting_area(x0: int, y0: int, x1: int, y1: int) -> void:
                         raw_light[pos] = l
                         queue.append(pos)
 
-        # BFS
+        # BFS propagation
         var idx := 0
         while idx < queue.size():
                 var pos: Vector2i = queue[idx]
@@ -280,9 +299,7 @@ func _recompute_lighting_area(x0: int, y0: int, x1: int, y1: int) -> void:
                 for dir in [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1)]:
                         var nx: int = pos.x + dir.x
                         var ny: int = pos.y + dir.y
-                        if nx < 0 or nx >= W or ny < 0 or ny >= H:
-                                continue
-                        if nx < x0 - 20 or nx > x1 + 20 or ny < y0 - 20 or ny > y1 + 20:
+                        if nx < ax0 or nx > ax1 or ny < ay0 or ny > ay1:
                                 continue
                         var t: int = tile_map.get_tile(nx, ny)
                         var decrease := 1
@@ -294,19 +311,16 @@ func _recompute_lighting_area(x0: int, y0: int, x1: int, y1: int) -> void:
                                 raw_light[Vector2i(nx, ny)] = new_light
                                 queue.append(Vector2i(nx, ny))
 
-        # Update light_grid from raw_light
+        # Update light_grid from raw_light (set value, don't just increase)
         for pos in raw_light:
                 var lx := int(pos.x / LIGHT_CELL_SIZE)
                 var ly := int(pos.y / LIGHT_CELL_SIZE)
                 if lx < 0 or lx >= light_grid_w or ly < 0 or ly >= light_grid_h:
                         continue
                 var dark: int = 15 - raw_light[pos]
-                if dark > light_grid[ly][lx]:
+                if dark < light_grid[ly][lx]:
                         light_grid[ly][lx] = dark
 
-        # For tiles not in raw_light, set them to max dark if they're far from any source
-        # (this is a simplification - proper lighting would track removal)
-        # For now, leave the previous values
 
 
 # === Public tile API ===
@@ -388,14 +402,25 @@ func get_nearby_stations(world_pos: Vector2, radius: float = 80.0) -> Array:
 
 
 func _process(delta: float) -> void:
+        # Redraw sky background
+        queue_redraw()
         # Spawn enemies
         _spawn_check(delta)
 
 
 func _draw() -> void:
-        # Draw spawn marker (debug)
-        # draw_circle(spawn_point, 5, Color.RED)
-        pass
+        # Draw sky background (changes with time of day)
+        var sky_color: Color = Color(0.45, 0.65, 0.95)  # Day sky
+        if GameManager:
+                var darkness := GameManager.darkness_factor()
+                sky_color = sky_color.lerp(Color(0.05, 0.05, 0.15), darkness)
+        # Draw a large rect covering the visible area
+        var view_rect: Rect2 = get_viewport_rect()
+        var canvas_transform := get_canvas_transform()
+        var origin := canvas_transform.get_origin()
+        var scale_v := canvas_transform.get_scale()
+        view_rect = Rect2(-origin / scale_v, view_rect.size / scale_v)
+        draw_rect(view_rect, sky_color)
 
 
 # === Spawn enemies ===
@@ -453,7 +478,7 @@ func _spawn_check(delta: float) -> void:
                                         spawn_y = ty - 2
                                         break
                         if spawn_y >= 0:
-                                var enemy_type := "slime"
+                                var enemy_type := "blue_slime"
                                 var r := randf()
                                 if r < 0.7:
                                         enemy_type = "blue_slime"
