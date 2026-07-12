@@ -62,11 +62,16 @@ func _process(delta: float) -> void:
                     enemy.take_damage(damage, velocity.normalized() * 100)
                 queue_free()
                 return
-        # Boss
+        # Boss segments
         if world.boss and is_instance_valid(world.boss):
-            var to_boss: Vector2 = world.boss.global_position - global_position
-            if to_boss.length() < 32:
-                if world.boss.has_method("take_damage"):
-                    world.boss.take_damage(damage, velocity.normalized() * 100)
-                queue_free()
-                return
+            var boss_segments: Variant = world.boss.get("segments")
+            if boss_segments is Array:
+                for seg in (boss_segments as Array).duplicate():
+                    if not is_instance_valid(seg):
+                        continue
+                    var to_seg: Vector2 = seg.global_position - global_position
+                    if to_seg.length() < 20:
+                        if seg.has_method("take_damage"):
+                            seg.take_damage(damage, velocity.normalized() * 100)
+                        queue_free()
+                        return

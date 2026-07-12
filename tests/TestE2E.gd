@@ -582,7 +582,29 @@ func _phase_12_summon_boss() -> void:
 # === Phase 13: Defeat the boss ===
 func _phase_13_defeat_boss() -> void:
     _log("Defeating Eater of Worlds...")
-    # Attack each segment
+    # First, test that sword attack hits boss segments
+    var head: Node = world.boss.segments[0]
+    var head_hp_before: int = head.health
+    # Move player close to the boss and attack
+    player.global_position = head.global_position + Vector2(20, 0)
+    # Set mouse position to point at the boss
+    player.mouse_world_pos = head.global_position
+    # Select sword
+    var sword_idx := -1
+    for i in range(10):
+        var item = player.inventory[i]
+        if item and typeof(item) == TYPE_DICTIONARY and item.get("id") == "copper_sword":
+            sword_idx = i
+            break
+    if sword_idx >= 0:
+        player.hotbar_index = sword_idx
+        # Simulate attack
+        player.attack_cooldown = 0  # Reset cooldown
+        var weapon: Dictionary = ItemDB.get_item("copper_sword")
+        player._do_attack(0.016, weapon)
+        await get_tree().create_timer(0.2).timeout
+        _check(head.health < head_hp_before or not is_instance_valid(head), "Sword attack damaged boss segment (HP: %d -> %d)" % [head_hp_before, head.health])
+    # Now kill all segments
     var segments_killed := 0
     while world.boss and is_instance_valid(world.boss) and world.boss.segments.size() > 0:
         var seg: Node = world.boss.segments[0]

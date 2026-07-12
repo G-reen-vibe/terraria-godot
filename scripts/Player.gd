@@ -706,14 +706,21 @@ func _do_attack(delta: float, weapon: Dictionary) -> void:
         if enemy.has_method("take_damage"):
             enemy.take_damage(damage, to_enemy.normalized() * knockback * 50)
             hit_something = true
-    # Hit boss too
+    # Hit boss segments (each segment is a separate target)
     if world.boss and is_instance_valid(world.boss):
-        var to_boss: Vector2 = world.boss.global_position - (global_position - Vector2(0, HEIGHT / 2))
-        if to_boss.length() <= range_val + 32:
-            var angle_diff := rad_to_deg(abs(attack_direction.angle_to(to_boss)))
-            if angle_diff < 80:
-                if world.boss.has_method("take_damage"):
-                    world.boss.take_damage(damage, to_boss.normalized() * knockback * 50)
+        var boss_segments: Variant = world.boss.get("segments")
+        if boss_segments is Array:
+            for seg in (boss_segments as Array).duplicate():
+                if not is_instance_valid(seg):
+                    continue
+                var to_seg: Vector2 = seg.global_position - (global_position - Vector2(0, HEIGHT / 2))
+                if to_seg.length() > range_val + 16:
+                    continue
+                var angle_diff := rad_to_deg(abs(attack_direction.angle_to(to_seg)))
+                if angle_diff > 70:
+                    continue
+                if seg.has_method("take_damage"):
+                    seg.take_damage(damage, to_seg.normalized() * knockback * 50)
                     hit_something = true
 
 
