@@ -12,7 +12,7 @@ config_version=5
 
 config/name="Terraria-like"
 config/description="A Terraria-like game up to the Eater of Worlds boss"
-run/main_scene="res://tests/TestGameplay.tscn"
+run/main_scene="res://scenes/Main.tscn"
 config/features=PackedStringArray("4.3", "GL Compatibility")
 config/icon="res://icon.svg"
 
