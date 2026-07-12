@@ -20,6 +20,13 @@ func _on_world_loaded() -> void:
     var player: Node = player_scene.instantiate()
     player.global_position = world.spawn_point
     world.add_child(player)
+    # Spawn Guide NPC near player
+    var guide_scene := load("res://scenes/npcs/GuideNPC.tscn")
+    var guide: Node = guide_scene.instantiate()
+    guide.global_position = world.spawn_point + Vector2(40, 0)
+    guide.set_home(world.spawn_point + Vector2(40, 0))
+    world.add_child(guide)
+    world.npcs.append(guide)
     # Add HUD
     var hud_scene := load("res://scenes/ui/HUD.tscn")
     var hud: Node = hud_scene.instantiate()
